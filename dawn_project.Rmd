@@ -1,0 +1,394 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+Muravetska Yaryna, Kantsir Solomia 
+D.A.W.N. vs Covid-19
+
+```{r}
+library('corrplot')
+library(readxl)
+library("sjPlot")
+library(forecast)
+library(ggplot2)
+library(GGally)
+library(forecast)
+library(dynlm)
+```
+
+```{r}
+#we've taken dataset for daily coronavirus deaths and confirmed cases 
+corona <- read_excel("project_data.xlsx")
+deaths <- corona$Deaths
+cases <- corona$Confirmed
+d <- corona$date
+
+#stocks' prices for same dates
+nflx <- read.csv(file = 'NFLX.csv')$Close
+dpz <- read.csv(file = 'DPZ.csv')$Close
+atvi1 <- read.csv(file = 'ATVI.csv')$Close
+
+# deleting NaNs from atvi data
+atvi <- c()
+for (el in atvi1){
+  if (el != 'null'){
+    atvi <- append(atvi, as.numeric(el))
+  }
+}
+wmt <- read.csv(file = 'WMT.csv')$Close
+stocks <- data.frame(dpz, atvi, wmt, nflx)
+
+# real stocks' for next few dates to check our predictions
+nflx_new <- read.csv(file = 'NFLX_new.csv')$Close
+dpz_new <- read.csv(file = 'DPZ_new.csv')$Close
+atvi_new <- read.csv(file = 'ATVI_new.csv')$Close
+wmt_new <- read.csv(file = 'WMT_new.csv')$Close
+```
+Step 1.
+```{r}
+# correlation between stocks and deaths 
+M<-cor(stocks)
+head(round(M,2))
+corrplot.mixed(M, lower.col = "black", number.cex = .7)
+ggpairs(data.frame(nflx,dpz,wmt,atvi,deaths,cases, as.Date(d)))
+
+```
+Step 2. 
+Following 2 regressions for evety stock will help us to find a more precise/explaining model and then make a conclusion based on the chosen one
+
+```{r}
+# nflx = B_0+ B_1*deathes + E
+n1 <- lm(nflx ~ deaths)
+summary(n1)
+plot_model(n1)
+```
+
+```{r}
+#nflx =B_0+ B_1*deaths + B_2*dpz + B_3*atvi + B_4*wmt + E
+n2 <- lm(nflx ~ deaths + dpz + atvi + wmt)
+summary(n2)
+```
+
+```{r}
+#dpz = 0+ B_1*cases+E
+d1 <- lm(dpz ~ cases)
+summary(d1)
+plot_model(d1)
+```
+
+```{r}
+#dpz =0+ B_1*cases + B_2*nflx + B_3*atvi + B_4*wmt + E
+d2 <- lm(dpz ~ cases + nflx + atvi + wmt)
+summary(d2)
+```
+
+
+```{r}
+# wmt = 0+ B_1*deaths+E
+w1 <- lm(wmt ~ deaths)
+summary(w1)
+plot_model(w1)
+```
+
+
+```{r}
+#wmt =0+ B_1*deaths + B_2*atvi + B_3*nflx + B_4*dpz + E
+w2 <- lm(wmt ~ deaths + atvi + nflx + dpz)
+summary(w2)
+```
+
+```{r}
+#atvi = 0+ B_1*deaths+E
+a1 <- lm(atvi ~ deaths)
+summary(a1)
+plot_model(a1)
+```
+
+```{r}
+#atvi =0+ B_1*deaths + B_2*nflx + B_3*wmt + B_4*dpz +E
+a2 <- lm(atvi ~ deaths + nflx + wmt + dpz)
+summary(a2)
+```
+
+Step 3. 
+-deaths AR(1) forecast
+deaths_t= B_0+B_1*deaths_lags+ E
+```{r}
+# method 1
+ar_d <- ar.ols(deaths, order.max = 1, demean = F, intercept = T)
+f_d <- forecast(ar_d, newdata=deaths[72])
+print(f_d)
+plot(f_d, main="AR(1) forecast for deaths", xlab="Days from beginning of coronavirus", ylab="Deaths")
+```
+```{r}
+# method 2
+deaths_level <- as.numeric(deaths[-1])
+deaths_lags <- as.numeric(deaths[-72])
+ar_deaths <- dynlm(deaths_level ~ deaths_lags)
+summary(ar_deaths)
+```
+-cases AR(1) forecast
+cases_t= B_0+B_1*cases_lags+ E
+```{r}
+# method 1
+ar_c <- ar.ols(cases, order.max = 1, demean = F, intercept = T)
+f_c <- forecast(ar_c, newdata=cases[72])
+print(f_c)
+plot(f_c, main="AR(1) forecast for cases", xlab="Days from beginning of coronavirus", ylab="Cases")
+```
+```{r}
+# method 2
+cases_level <- as.numeric(cases[-1])
+cases_lags <- as.numeric(cases[-72])
+ar_cases <- dynlm(cases_level ~ cases_lags)
+summary(ar_cases)
+```
+-nflx forecast using 3 models
+
+Model 1
+nflx_level=B_0+B_1*nflx_lags+E
+```{r}
+# method 1
+ar_nf <- ar.ols(nflx, order.max = 1, demean = F, intercept = T)
+f_nf <- forecast(ar_nf, newdata=nflx[72])
+print(f_nf)
+plot(f_nf, main="AR(1) forecast for Netflix stock prices", xlab="Days from beginning of coronavirus", ylab="Netflix stock prices")
+```
+```{r}
+# method 2
+nflx_level <- as.numeric(nflx[-1])
+nflx_lags <- as.numeric(nflx[-72])
+ar_nflx <- dynlm(nflx_level ~ nflx_lags)
+summary(ar_nflx)
+```
+
+Model 2
+nflx_level=B_0+1nflx_lags+ B_2deaths_lags+ E
+```{r}
+ar_nflx1 <- dynlm(nflx_level ~ nflx_lags+deaths_lags)
+future_n_d<-forecast(ar_nflx1, newdata=data.frame(nflx_lags=nflx[72], deaths_lags=c(deaths[72],f_d$mean)))
+plot(x = c(1:82),y=c(future_n_d$x,future_n_d$mean),type = 'l', ylim=c(295, 480), main="AR(1)+deaths forecast for Netflix stock prices", xlab="Days from beginning of coronavirus", ylab="Netflix stock prices", col="blue")
+lines(x=c(72:82),y=future_n_d$upper[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_n_d$lower[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_n_d$upper[,2], col = "red", lty=2)
+lines(x=c(72:82),y=future_n_d$lower[,2], col = "red", lty=2)
+abline(v=72, col='red')
+lines(x=c(72:78),y=nflx_new, col = "green")
+legend("topleft", legend=c("model", "80 pred int", "95 pred int", "real stocks"),
+       col=c("blue", "orange","red", "green"), lty = c(1,2,2,1), cex=0.8)
+summary(ar_nflx1)
+print(future_n_d)
+```
+
+Model 3
+nflx_level =B_0+1 nflx_lags + B_2deaths_lags + B_3atvi_lags +  B_4wmt_lags + B_5dpz_lags+E
+```{r}
+ar_nflx2 <- dynlm(nflx_level ~ nflx_lags+deaths_lags+atvi_lags+wmt_lags+dpz_lags)
+future_n_d_2<-forecast(ar_nflx2, newdata=data.frame(nflx_lags=nflx[72], deaths_lags=c(deaths[72],f_d$mean), atvi_lags=c(atvi[72],future_a_d$mean[1:10]), wmt_lags=c(wmt[72],future_w_d$mean[1:10]), dpz_lags=c(dpz[72],future_d_d$mean[1:10])))
+plot(x = c(1:82),y=c(future_n_d_2$x,future_n_d_2$mean),type = 'l', main="+other stock prices for Netflix stock prices", xlab="Days from beginning of coronavirus", ylab="Netflix stock prices", col="purple")
+lines(x=c(72:82),y=future_n_d_2$upper[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_n_d_2$lower[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_n_d_2$upper[,2], col = "red", lty=2)
+lines(x=c(72:82),y=future_n_d_2$lower[,2], col = "red", lty=2)
+abline(v=72, col='red')
+lines(x=c(72:78),y=nflx_new, col = "green")
+legend("topleft", legend=c("model", "80 pred int", "95 pred int", "real stocks"),
+       col=c("purple", "orange","red", "green"), lty = c(1,2,2,1), cex=0.8)
+summary(ar_nflx2)
+print(future_n_d_2)
+```
+
+-dpz forecast using 3 models
+
+Model 1
+dmz_level=dmz_lags+E
+```{r}
+# method 1
+ar_dpz1 <- ar.ols(dpz, order.max = 1, demean = F, intercept = T)
+f_dpz <- forecast(ar_dpz1, newdata=dpz[72])
+print(f_dpz)
+plot(f_dpz, main="AR(1) forecast for Domino’s pizza stock prices", xlab="Days from beginning of coronavirus", ylab="Domino’s pizza stock prices")
+```
+```{r}
+# method 2
+dpz_level <- as.numeric(dpz[-1])
+dpz_lags <- as.numeric(dpz[-72])
+ar_dpz <- dynlm(dpz_level ~ dpz_lags)
+summary(ar_dpz)
+```
+
+Model 2
+dmz_level=B_0+B_1dmz_lags+B_cases_lags+E
+```{r}
+ar_dpz1 <- dynlm(dpz_level ~ dpz_lags+cases_lags)
+future_d_d<-forecast(ar_dpz1, newdata=data.frame(dpz_lags=dpz[72], cases_lags=c(cases[72],f_c$mean)))
+plot(x = c(1:82),y=c(future_d_d$x,future_d_d$mean),type = 'l', ylim = c(270,420), main="AR(1)+deaths forecast for Domino’s pizza stock prices", xlab="Days from beginning of coronavirus", ylab="Domino’s pizza stock prices", col="blue")
+lines(x=c(72:82),y=future_d_d$upper[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_d_d$lower[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_d_d$upper[,2], col = "red", lty=2)
+lines(x=c(72:82),y=future_d_d$lower[,2], col = "red", lty=2)
+abline(v=72, col='red')
+lines(x=c(72:78),y=dpz_new, col = "green")
+legend("topleft", legend=c("model", "80 pred int", "95 pred int", "real stocks"),
+       col=c("blue", "orange","red", "green"), lty = c(1,2,2,1), cex=0.8)
+summary(ar_dpz1)
+print(future_d_d)
+```
+Model 3
+dmz_level=B_0+B_1dmz_lags+B_2cases_lags+B_3atvi_lags+B_4wmt_lags+B_5nflx_lags+E
+```{r}
+ar_dpz2 <- dynlm(dpz_level ~ dpz_lags+cases_lags+atvi_lags+wmt_lags+nflx_lags)
+future_d_d_2<-forecast(ar_dpz2, newdata=data.frame(dpz_lags=dpz[72], cases_lags=c(cases[72],f_c$mean), atvi_lags=c(atvi[72],future_a_d$mean[1:10]), wmt_lags=c(wmt[72],future_w_d$mean[1:10]), nflx_lags=c(nflx[72],future_n_d$mean[1:10])))
+plot(x = c(1:82),y=c(future_d_d_2$x,future_d_d_2$mean),type = 'l', ylim = c(270,420), main="+other stock prices for Domino’s pizza stock prices", xlab="Days from beginning of coronavirus", ylab="Domino’s pizza stock prices", col="purple")
+lines(x=c(72:82),y=future_d_d_2$upper[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_d_d_2$lower[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_d_d_2$upper[,2], col = "red", lty=2)
+lines(x=c(72:82),y=future_d_d_2$lower[,2], col = "red", lty=2)
+abline(v=72, col='red')
+lines(x=c(72:78),y=dpz_new, col = "green")
+legend("topleft", legend=c("model", "80 pred int", "95 pred int", "real stocks"),
+       col=c("purple", "orange","red", "green"), lty = c(1,2,2,1), cex=0.8)
+summary(ar_dpz2)
+print(future_d_d_2)
+```
+
+-atvi forecast using 3 models
+
+Model 1
+atvi_level=B_0+1atvi_lags+E
+```{r}
+# method 1
+ar_a <- ar.ols(atvi, order.max = 1, demean = F, intercept = T)
+f_a <- forecast(ar_a, newdata=atvi[72])
+print(f_a)
+plot(f_a, main="AR(1) forecast for Activision stock prices", xlab="Days from beginning of coronavirus", ylab="Activision stock prices")
+```
+```{r}
+# method 2
+atvi_level <- as.numeric(atvi[-1])
+atvi_lags <- as.numeric(atvi[-72])
+ar_atvi <- dynlm(atvi_level ~ atvi_lags)
+summary(ar_atvi)
+```
+
+Model 2
+atvi_level=B_0+ B_1atvi_lags+B_2deaths_lags+E
+```{r}
+ar_atvi1 <- dynlm(atvi_level ~ atvi_lags+deaths_lags)
+future_a_d<-forecast(ar_atvi1, newdata=data.frame(atvi_lags=atvi[72], deaths_lags=c(deaths[72],f_d$mean)))
+plot(x = c(1:82),y=c(future_a_d$x,future_a_d$mean),type = 'l', ylim=c(51,73), main="AR(1)+deaths forecast for Activision stock prices", xlab="Days from beginning of coronavirus", ylab="Activision stock prices", col="blue")
+lines(x=c(72:82),y=future_a_d$upper[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_a_d$lower[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_a_d$upper[,2], col = "red", lty=2)
+lines(x=c(72:82),y=future_a_d$lower[,2], col = "red", lty=2)
+abline(v=72, col='red')
+lines(x=c(72:78),y=atvi_new, col = "green")
+legend("topleft", legend=c("model", "80 pred int", "95 pred int", "real stocks"),
+       col=c("blue", "orange","red", "green"), lty = c(1,2,2,1), cex=0.8)
+summary(ar_atvi1)
+print(future_a_d)
+```
+
+
+Model 3
+atvi_level=B_0+B_1atvi_lags+B_2deaths_lags+B_3nflx_lags+B_4wmt_lags+B_5dpz_lags+E
+```{r}
+ar_atvi2 <- dynlm(atvi_level ~ atvi_lags+deaths_lags+nflx_lags+wmt_lags+dpz_lags)
+future_a_d_2<-forecast(ar_atvi2, newdata=data.frame(atvi_lags=atvi[72], deaths_lags=c(deaths[72],f_d$mean), nflx_lags=c(nflx[72],future_n_d$mean[1:10]), wmt_lags=c(wmt[72],future_w_d$mean[1:10]), dpz_lags=c(dpz[72],future_d_d$mean[1:10])))
+plot(x = c(1:82),y=c(future_a_d_2$x,future_a_d_2$mean),type = 'l', main="+other stock prices for Activision stock prices", xlab="Days from beginning of coronavirus", ylab="Actiovision stock prices", col="purple")
+lines(x=c(72:82),y=future_a_d_2$upper[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_a_d_2$lower[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_a_d_2$upper[,2], col = "red", lty=2)
+lines(x=c(72:82),y=future_a_d_2$lower[,2], col = "red", lty=2)
+abline(v=72, col='red')
+lines(x=c(72:78),y=atvi_new, col = "green")
+legend("topleft", legend=c("model", "80 pred int", "95 pred int", "real stocks"),
+       col=c("purple", "orange","red", "green"), lty = c(1,2,2,1), cex=0.8)
+summary(ar_atvi2)
+print(future_a_d_2)
+```
+
+-wmt forecast using 3 models
+
+Model 1
+wmt_level=B_0+B_1wmt_lags+E
+```{r}
+# method 1
+ar_w <- ar.ols(wmt, order.max = 1, demean = F, intercept = T)
+f_w <- forecast(ar_w, newdata=wmt[72])
+print(f_w)
+plot(f_w, main="AR(1) forecast for Walmart stock prices", xlab="Days from beginning of coronavirus", ylab="Walmart stock prices")
+```
+```{r}
+# method 2
+wmt_level <- as.numeric(wmt[-1])
+wmt_lags <- as.numeric(wmt[-72])
+ar_wmt <- dynlm(wmt_level ~ wmt_lags)
+summary(ar_wmt)
+```
+
+Model 2
+wmt_level=B_0+B_1wmt_lags+B_2deaths_lags+E
+```{r}
+ar_wmt1 <- dynlm(wmt_level ~ wmt_lags+deaths_lags)
+future_w_d<-forecast(ar_wmt1, newdata=data.frame(wmt_lags=wmt[72], deaths_lags=c(deaths[72],f_d$mean)))
+plot(x = c(1:82),y=c(future_w_d$x,future_w_d$mean),type = 'l', main="AR(1)+deaths forecast for Walmart stock prices", xlab="Days from beginning of coronavirus", ylab="Walmart stock prices", col="blue")
+lines(x=c(72:82),y=future_w_d$upper[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_w_d$lower[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_w_d$upper[,2], col = "red", lty=2)
+lines(x=c(72:82),y=future_w_d$lower[,2], col = "red", lty=2)
+abline(v=72, col='red')
+lines(x=c(72:78),y=wmt_new, col = "green")
+legend("topleft", legend=c("model", "80 pred int", "95 pred int", "real stocks"),
+       col=c("blue", "orange","red", "green"), lty = c(1,2,2,1), cex=0.8)
+summary(ar_wmt1)
+print(future_w_d)
+```
+
+
+Model 3
+wmt_level=B_0+B_1wmt_lags+B_2deaths_lags+B_3atvi_lags+B_4nflx_lags+B_5dpz_lags+E
+```{r}
+ar_wmt2 <- dynlm(wmt_level ~ wmt_lags+deaths_lags+atvi_lags+nflx_lags+dpz_lags)
+future_w_d_2<-forecast(ar_wmt2, newdata=data.frame(wmt_lags=wmt[72], deaths_lags=c(deaths[72],f_d$mean), atvi_lags=c(atvi[72],future_a_d$mean[1:10]), nflx_lags=c(nflx[72],future_n_d$mean[1:10]), dpz_lags=c(dpz[72],future_d_d$mean[1:10])))
+plot(x = c(1:82),y=c(future_w_d_2$x,future_w_d_2$mean),type = 'l', main="+other stock prices for Walmart stock prices", xlab="Days from beginning of coronavirus", ylab="Walmart stock prices", col="purple")
+lines(x=c(72:82),y=future_w_d_2$upper[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_w_d_2$lower[,1], col = "orange", lty=2)
+lines(x=c(72:82),y=future_w_d_2$upper[,2], col = "red", lty=2)
+lines(x=c(72:82),y=future_w_d_2$lower[,2], col = "red", lty=2)
+abline(v=72, col='red')
+lines(x=c(72:78),y=wmt_new, col = "green")
+legend("topleft", legend=c("model", "80 pred int", "95 pred int", "real stocks"),
+       col=c("purple", "orange","red", "green"), lty = c(1,2,2,1), cex=0.8)
+summary(ar_wmt2)
+print(future_w_d_2)
+```
+
+Step 4. 
+Checking accuracy of forecasts of all models
+
+```{r}
+nflx_fit<-data.frame(accuracy(f_nf, nflx_new)[2,1:6],accuracy(future_n_d, nflx_new)[2,1:6],accuracy(future_n_d_2, nflx_new)[2,1:6])
+colnames(nflx_fit)<-c("NFLX AR(1)", "NFLX AR+deaths", "NFLX AR+deaths+stocks")
+print(nflx_fit)
+
+dpz_fit<-data.frame(accuracy(f_dpz, dpz_new)[2,1:6],accuracy(future_d_d, dpz_new)[2,1:6],accuracy(future_d_d_2, dpz_new)[2,1:6])
+colnames(dpz_fit)<-c("DPZ AR(1)", "DPZ AR+deaths", "DPZ AR+deaths+stocks")
+print(dpz_fit)
+
+atvi_fit<-data.frame(accuracy(f_a, atvi_new)[2,1:6],accuracy(future_a_d, atvi_new)[2,1:6],accuracy(future_a_d_2, atvi_new)[2,1:6])
+colnames(atvi_fit)<-c("ATVI AR(1)", "ATVI AR+deaths", "ATVI AR+deaths+stocks")
+print(atvi_fit)
+
+wmt_fit<-data.frame(accuracy(f_w, wmt_new)[2,1:6],accuracy(future_w_d, wmt_new)[2,1:6],accuracy(future_w_d_2, wmt_new)[2,1:6])
+colnames(wmt_fit)<-c("WMT AR(1)", "WMT AR+deaths", "WMT AR+deaths+stocks")
+print(wmt_fit)
+```
+
+
+
+
+
+
+
+
